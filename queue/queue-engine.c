@@ -635,11 +635,27 @@ int memcache_get (struct connection *c, const char *old_key, int old_key_len) {
 
     QRETURN(get, 0);
   }
+  
+  if (key_len >= 16 && !strncmp (key, "upd_secret_qname", 16)) {
+    int st = 16;
+    if (key[st] == '(' && key[key_len - 1] == ')' && key_len - st - 2 < STATS_BUFF_SIZE) {
+      char *s = stats_buff;
+      int len = key_len - st - 2;
+      memcpy (s, key + st + 1, len);
+      s[len] = 0;
+      
+      upd_qname_secret (s);
+
+      return_one_key (c, old_key, "OK", 2);
+    }
+
+    QRETURN(get, 0);
+  }
 
   if (key_len >= 10 && !strncmp (key, "upd_secret", 10)) {
     int id;
     if (sscanf (key, "upd_secret%d", &id) == 1) {
-      upd_secret (id);
+      upd_user_secret (id);
     }
     return_one_key (c, old_key, "OK", 2);
 

@@ -147,3 +147,25 @@ typedef long long *llp;
 
 #include "dl-undef.h"
 
+/*
+ *
+ * hash_map <string, int>
+ *
+ */
+
+#define DATA_T dl_string
+#define RDATA_T int
+#define TNAME map_string_int
+#define IMPLEMENTATION OPEN
+#define STORE_HASH ON
+#define STRICT OFF
+#define RESIZABLE ON
+#define MAP ON
+
+#if defined (DL_HEADER)
+#  include "dl-hashtable.h"
+#else
+#  include "dl-hashtable.c"
+#endif
+
+#include "dl-undef.h"

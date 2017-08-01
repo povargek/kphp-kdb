@@ -44,7 +44,8 @@
 
 #define MAX_QNAME 24
 #define RSEED_LEN 7
-#define KEY_LEN (MAX_QNAME + 1 + 8 + 8 + 8 + RSEED_LEN)//{qname}_{ip}{id}{secret}{random}
+#define KEY_DATA_LEN (MAX_QNAME + 1 + 8 + 8 + 8 + 8)
+#define KEY_LEN (KEY_DATA_LEN + RSEED_LEN)//{qname}_{ip}{id}{secret}{secret_qname}{random}
 #define IS_UID(x) (dl_abs (x) < 2000000000)
 
 #define RPC_NEWS_SUBSCR 0x17da0000
@@ -170,7 +171,7 @@ void release_key_group (qkey_group *k);
 
 void free_by_time (int mx);
 
-int upd_secret (int id);
+int upd_user_secret (int id);
 
 int subscribers_add_new (ll id, pli *a, int n);
 int subscribers_add_new_rev (ll id, pli *a, int n);

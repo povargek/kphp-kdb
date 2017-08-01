@@ -106,7 +106,7 @@ dl_crypto cr;
 
 long long max_events_memory;
 
-void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsigned int secret);
+void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsigned int secret, unsigned int secret_qname);
 
 int eq_n, eq_total;
 
@@ -154,13 +154,13 @@ void event_free (event *e);
 void delete_qkey (qkey *k);
 
 /***
-  Secrets
+  Secrets (users ids)
  ***/
 
-map_int_int secrets;
+map_int_int secrets_users;
 
-int upd_secret (int id) {
-  int *v = map_int_int_add (&secrets, id);
+int upd_user_secret (int id) {
+  int *v = map_int_int_add (&secrets_users, id);
   int nv = rand();
   if (nv == *v) {
     nv += 13;
@@ -168,10 +168,33 @@ int upd_secret (int id) {
   return *v = nv;
 }
 
-int get_secret (int id) {
-  int *v = map_int_int_get (&secrets, id);
+int get_user_secret (int id) {
+  int *v = map_int_int_get (&secrets_users, id);
   if (v == NULL) {
-    return upd_secret (id);
+    return upd_user_secret (id);
+  }
+  return *v;
+}
+
+/***
+  Secrets (queue names)
+ ***/
+
+map_string_int secrets_qnames;
+
+int upd_qname_secret (char *qname) {
+  int *v = map_string_int_add (&secrets_qnames, qname);
+  int nv = rand();
+  if (nv == *v) {
+    nv += 13;
+  }
+  return *v = nv;
+}
+
+int get_qname_secret (char *qname) {
+  int *v = map_string_int_get (&secrets_qnames, qname);
+  if (v == NULL) {
+    return upd_qname_secret (qname);
   }
   return *v;
 }
@@ -834,7 +857,7 @@ char *get_timestamp_key (char *qname, int id, int ip, int timeout, char *extra, 
   }
 
   dbg ("Before encode_key\n");
-  encode_key (tmp, qname, id, ip, get_secret (id));
+  encode_key (tmp, qname, id, ip, get_user_secret (id), get_qname_secret (qname));
   dbg ("After encode_key\n");
 
   tmp[KEY_LEN] = 0;
@@ -1014,7 +1037,7 @@ int hex_to_int (char *s, int *x) {
   return 1;
 }
 
-int decode_key (char *key, char *qname, int *id, int *ip, int *secret) {
+int decode_key (char *key, char *qname, int *id, int *ip, int *secret, int *secret_qname) {
   static char s[KEY_LEN + 1];
   int i, j;
 
@@ -1057,13 +1080,17 @@ int decode_key (char *key, char *qname, int *id, int *ip, int *secret) {
   if (!hex_to_int (s + MAX_QNAME + 1 + 8 + 8, secret)) {
     return 0;
   }
+  
+  if (!hex_to_int (s + MAX_QNAME + 1 + 8 + 8 + 8, secret_qname)) {
+    return 0;
+  }
 
   return 1;
 }
 
-void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsigned int secret) {
+void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsigned int secret, unsigned int secret_qname) {
 //  fprintf (stderr, "encode <%s|%d|%u|%d>\n", qname, id, ip, secret);
-  dbg ("In encode_key %s %u %u %u\n", qname, id, ip, secret);
+  dbg ("In encode_key %s %u %u %u %u\n", qname, id, ip, secret, secret_qname);
   static char s[KEY_LEN + 1];
 
   int len = strlen (qname);
@@ -1081,6 +1108,7 @@ void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsig
   sprintf (s + MAX_QNAME + 1, "%08x", id);
   sprintf (s + MAX_QNAME + 1 + 8, "%08x", ip);
   sprintf (s + MAX_QNAME + 1 + 16, "%08x", secret);
+  sprintf (s + MAX_QNAME + 1 + 24, "%08x", secret_qname);
 
   dbg ("Running dl_crypto_encode %s\n", s);
   dl_crypto_encode (&cr, s, key);
@@ -1091,27 +1119,29 @@ void encode_key (char *key, char *qname, unsigned int id, unsigned int ip, unsig
 qkey *validate_key (char *key_name, int id, int ip, int req_ts, int a_release, char *err) {
   ip &= 0xFFFFF000;
   static char qname[MAX_QNAME + 1], kname[KEY_LEN + 1];
-  int t_id, t_ip, t_secret;
+  int t_id, t_ip, t_secret, t_secret_qname;
 
   memcpy (kname, key_name, KEY_LEN);
   kname[KEY_LEN] = 0;
 
 //  fprintf (stderr, "before decode\n");
-  int secret = get_secret (id);
-  if (!decode_key (key_name, qname, &t_id, &t_ip, &t_secret)) {
+  int secret = get_user_secret (id);
+  if (!decode_key (key_name, qname, &t_id, &t_ip, &t_secret, &t_secret_qname)) {
     if (now - start_time > 600) {
       dl_log_add (LOG_WARNINGS, 1, "Now = %.6lf. Failed : 2, a_release = %d, err = 1. Can't decode. id = %d, ip = %d, key_name = %s\n", precise_now, a_release, id, ip, kname);
     }
     *err = 1;
     return NULL;
   }
+  
+  int secret_qname = get_qname_secret (qname);
 
 //  fprintf (stderr, "qname = %s\n", qname);
   if (my_verbosity > 1) {
-    fprintf (stderr, "(%08x %08x) (%08x %08x) (%08x %08x)\n", t_id, id, t_ip, ip, t_secret, secret);
+    fprintf (stderr, "(%08x %08x) (%08x %08x) (%08x %08x) (%08x %08x)\n", t_id, id, t_ip, ip, t_secret, secret, t_secret_qname, secret_qname);
   }
-  if (t_id != id || t_ip != ip || t_secret != secret) {
-    if (t_secret == secret) {
+  if (t_id != id || t_ip != ip || t_secret != secret || t_secret_qname != secret_qname) {
+    if (t_secret == secret && t_secret_qname == secret_qname) {
       dl_log_add (LOG_WARNINGS, 2, "Now = %.6lf. Failed : 2, a_release = %d, err = 2. id or ip mismatch. t_id != id || t_ip != ip : %d != %d || %u != %u\n",
                                     precise_now, a_release, t_id, id, t_ip, ip);
     }
@@ -1994,7 +2024,8 @@ int init_all (void) {
 
   shmap_string_vptr_init (&h_queue);
   shmap_string_vptr_init (&h_qkey);
-  map_int_int_init (&secrets);
+  map_int_int_init (&secrets_users);
+  map_string_int_init (&secrets_qnames);
   map_ll_vptr_init (&alias);
 
   hset_llp_init (&h_subscribers);
@@ -2012,7 +2043,7 @@ int init_all (void) {
   last_del_time = GET_TIME_ID (get_utime (CLOCK_MONOTONIC));
 
   crypto_memory -= dl_get_memory_used();
-  dl_crypto_init (&cr, MAX_QNAME + 1 + 8 + 8 + 8, RSEED_LEN, 919998317, 999983, time (NULL));
+  dl_crypto_init (&cr, KEY_DATA_LEN, RSEED_LEN, 919998317, 999983, time (NULL));
   crypto_memory += dl_get_memory_used();
 
   return 1;
@@ -2051,7 +2082,8 @@ void free_all (void) {
 
     shmap_string_vptr_free (&h_queue);
     shmap_string_vptr_free (&h_qkey);
-    map_int_int_free (&secrets);
+    map_int_int_free (&secrets_users);
+    map_string_int_free (&secrets_qnames);
     map_ll_vptr_free (&alias);
 
     hset_llp_free (&h_subscribers);
@@ -2068,7 +2100,8 @@ void free_all (void) {
 long get_htbls_memory (void) {
   return shmap_string_vptr_get_memory_used (&h_queue) +
          shmap_string_vptr_get_memory_used (&h_qkey) +
-         map_int_int_get_memory_used (&secrets) +
+         map_int_int_get_memory_used (&secrets_users) +
+         map_string_int_get_memory_used (&secrets_qnames) +
          map_ll_vptr_get_memory_used (&alias) +
          hset_llp_get_memory_used (&h_subscribers);
 }
